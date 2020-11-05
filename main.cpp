@@ -175,12 +175,19 @@ int vec_compare_greater(std::vector<int> a, std::vector<int> b)
     return 3;
 }
 
+void mergeVT(std::vector<int> vt)
+{
+  for(int i=0;i<Vtime.size();i++)
+  {
+    if(vt[i]>Vtime[i])
+      Vtime[i]=vt[i];
+  }
+}
+
 void addVP(int procID_SendTo)
 {
   V_P vp;
-  std::cout<<"vo duoc addvp\n";
   //mutex_VTP2.lock();
-  std::cout<<"Vo duoc day k??\n";
   vp.procID = procID_SendTo;
   vp.VT = Vtime;
   if (Vproc.size() == 0)
@@ -191,12 +198,10 @@ void addVP(int procID_SendTo)
   }
   else
   {
-    std::cout<<"Vo duoc else\n";
     for (int i = 0; i < Vproc.size(); i++)
     {
       if (Vproc[i].procID == procID_SendTo)
       {
-        std::cout<<"So sanh bang\n";
         Vproc[i].VT = Vtime;
         return;
       }
@@ -324,45 +329,51 @@ bool check_data_recv() // Kiem tra du lieu trong
   return false;
 }
 
-void add_vec_p(std::vector<V_P> &vp, V_P a)
+void add_vec_p(V_P a)
 {
-  for (int i = 0; i < vp.size() - 1; i++)
+  if(Vproc[0].procID<a.procID)
   {
-    if (vp[i].procID <= a.procID && vp[i + 1].procID > a.procID)
+    Vproc.insert(Vproc.begin(),a);
+    return;
+  }
+  for (int i = 0; i < Vproc.size() - 1; i++)
+  {
+    if (Vproc[i].procID <= a.procID && Vproc[i + 1].procID > a.procID)
     {
-      vp.insert(vp.begin() + i + 1, a);
+      Vproc.insert(Vproc.begin() + i + 1, a);
+      return;
     }
   }
+  Vproc.push_back(a);
 }
 
-std::vector<V_P> mergeVP(std::vector<V_P> a, std::vector<V_P> b)
+void mergeVP(std::vector<V_P> a)
 {
-  if (a.size() == 0)
-    return b;
-  if (b.size() == 0)
-    return a;
+  if (Vproc.size() == 0)
+  {
+    Vproc=a;
+  }
 
   std::vector<V_P> copy = a;
-  for (int i = 0; i < b.size(); i++)
+  for (int i = 0; i < a.size(); i++)
   {
     int dk1 = 0;
-    for (int j = 0; j < copy.size(); j++)
+    for (int j = 0; j < Vproc.size(); j++)
     {
-      if (copy[j].procID == b[i].procID)
+      if (Vproc[j].procID == a[i].procID)
       {
         dk1 = 1;
-        for (int k = 0; k < copy[j].VT.size(); k++)
+        for (int k = 0; k < Vproc[j].VT.size(); k++)
         {
-          if (copy[j].VT[k] < b[i].VT[k])
-            copy[j].VT[k] = b[i].VT[k];
+          if (Vproc[j].VT[k] < a[i].VT[k])
+            Vproc[j].VT[k] = a[i].VT[k];
         }
       }
     }
 
     if (dk1 == 0)
-      add_vec_p(copy, b[i]);
+      add_vec_p(a[i]);
   }
-  return copy;
 }
 
 void send_mess( std::string ip, int port, std::string mess)
@@ -406,30 +417,30 @@ void thr_send(Proc_Info procinfo, Proc_Info procinfo2)
   int i = 0;
   while (i < sl_mess)
   {
-    std::cout<<"asdasssssssssssssssssssssssssssssssss\n";
+    
     std::string mess;
     V_M vm;
 
     srand(time(NULL));
     int res = rand() % (8 - 1 + 1) + 1;
     sleep(res);
-    std::cout<<"kkdcnkdkc\n";
+    
     mutex_VTP.lock();
     vm.v_p = Vproc;
-    std::cout<<"adddddddddddd\n";
+    
     addVP(procinfo2.procID);
-    std::cout<<"kkkkkkkkkdkdddddddddd\n";
+    
     Vtime[procinfo.procID - 1] += 1;
     vm.VTm = Vtime;
     mutex_VTP.unlock();
     mess = ConvertData(vm);
-    std::cout<<"meeeeeeeeeeeee\n";
+   
     mess = mess + "proc " + std::to_string(procinfo.procID) + " - message " + std::to_string(i);
     i++;
 
     std::cout << "proc " << procinfo.procID << " gui mess " << i << " to proc " << procinfo2.procID << "\n";
     send_mess(procinfo2.IP, procinfo2.port, mess);
-    std::cout<<procinfo.procID<<" da gui \n";
+    
   }
 }
 
@@ -551,16 +562,18 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
         log_recv(procinfo.procID, vm, "DELIVERY");
         mutex_log.unlock();
         mutex_VTP.lock();
-        Vtime = vm.VTm;
+        mergeVT(vm.VTm);
         Vtime[procinfo.procID - 1] += 1;
 
-        Vproc = mergeVP(Vproc, vm.v_p);
+        mergeVP( vm.v_p);
         mutex_VTP.unlock();
         std::cout << "delivery mess(1)\n";
       }
       else // Truong hop vm da co vector vp trung voi procID
       {
+        mutex_VTP.lock();
         int ketquatrave = vec_compare_greater(Vtime, vm.v_p[save].VT);
+        mutex_VTP.unlock();
         if (ketquatrave == 0 || ketquatrave == 3) // vector time cua proc hien tai be hon vector cua message dc gui toi
         {
           // Luu buffer
@@ -580,10 +593,10 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
           log_recv(procinfo.procID, vm, "DELIVERY");
           mutex_log.unlock();
           mutex_VTP.lock();
-          Vtime = vm.VTm;
+          mergeVT(vm.VTm);
           Vtime[procinfo.procID - 1] += 1;
 
-          Vproc = mergeVP(Vproc, vm.v_p);
+          mergeVP(vm.v_p);
           mutex_VTP.unlock();
 
           std::cout << "Delivery message(2)\n";
@@ -603,18 +616,19 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
               break;
             }
           }
-
+          mutex_VTP.lock();
           int kqua = vec_compare_greater(Vtime, array_buffer[k].first.v_p[indexl].VT);
+          mutex_VTP.unlock();
           if (kqua == 1 || kqua == 2)
           {
             mutex_log.lock();
             log_recv(procinfo.procID, array_buffer[k].first, "DELIVERY (B)");
             mutex_log.unlock();
             mutex_VTP.lock();
-            Vtime = array_buffer[k].first.VTm;
+            mergeVT(array_buffer[k].first.VTm);
             Vtime[procinfo.procID - 1] += 1;
 
-            Vproc = mergeVP(Vproc, array_buffer[k].first.v_p);
+             mergeVP(array_buffer[k].first.v_p);
             mutex_VTP.unlock();
 
             array_buffer.erase(array_buffer.begin() + k);
