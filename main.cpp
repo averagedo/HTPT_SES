@@ -55,8 +55,11 @@ std::mutex mutex_VTP2;
 std::mutex mutex_buffrecv;
 std::mutex mutex_log;
 std::mutex mutex_arrbuff;
+std::mutex mutex_senddone;
 
 std::condition_variable cv;
+
+int senddone = 0;
 
 void printVM(V_M vm)
 {
@@ -194,7 +197,6 @@ void addVP(int procID_SendTo)
   vp.VT = Vtime;
   if (Vproc.size() == 0)
   {
-    std::cout << "Vo duoc cai dau bang\n";
     Vproc.push_back(vp);
     return;
   }
@@ -378,8 +380,9 @@ void mergeVP(std::vector<V_P> a)
   }
 }
 
-void send_mess(std::string ip, int port, std::string mess)
+void send_mess(std::string ip, int port, std::string mess, int res)
 {
+  sleep(res);
   int sock;
   sockaddr_in serv_addr;
   char buffer[Len_buff] = {0};
@@ -423,16 +426,14 @@ void thr_send(Proc_Info procinfo, Proc_Info procinfo2)
     std::string mess;
     V_M vm;
 
-    srand(time(NULL));
-    int res = rand() % (8 - 1 + 1) + 1;
-    sleep(res);
+    srand((unsigned int)time(NULL) + procinfo.procID);
+    int res = rand() % (8 - 1 + 1);
+    //sleep(res);
 
     mutex_VTP.lock();
     vm.v_p = Vproc;
-
-    addVP(procinfo2.procID);
-
     Vtime[procinfo.procID - 1] += 1;
+    addVP(procinfo2.procID);
     vm.VTm = Vtime;
     mutex_VTP.unlock();
     mess = ConvertData(vm);
@@ -441,8 +442,14 @@ void thr_send(Proc_Info procinfo, Proc_Info procinfo2)
     i++;
 
     std::cout << "proc " << procinfo.procID << " gui mess " << i << " to proc " << procinfo2.procID << "\n";
-    send_mess(procinfo2.IP, procinfo2.port, mess);
+    std::thread sm(send_mess, procinfo2.IP, procinfo2.port, mess, res);
+    sm.detach();
+    //send_mess(procinfo2.IP, procinfo2.port, mess);
+    sleep(3);
   }
+  mutex_senddone.lock();
+  senddone++;
+  mutex_senddone.unlock();
 }
 
 void recv_mess(int procID, int port)
@@ -474,7 +481,7 @@ void recv_mess(int procID, int port)
     std::cout << "Listen ERROR\n";
   }
 
-  int i=0;
+  int i = 0;
   while (1)
   {
     std::cout << "accepting\n\n";
@@ -500,7 +507,7 @@ void recv_mess(int procID, int port)
     cv.notify_one();
 
     i++;
-    std::cout<<"i ne: "<<i<<"\n";
+    std::cout << "i ne: " << i << "\n";
     close(new_socket);
   }
 }
@@ -511,7 +518,7 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
 
   std::thread recv_thr(recv_mess, procinfo.procID, procinfo.port);
   recv_thr.detach();
-  sleep(4);
+  sleep(3);
 
   // GUI
   std::thread *thrs = new std::thread[sl_proc];
@@ -521,6 +528,7 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
     thrs[i].detach();
   }
 
+  int count = 0;
   while (1)
   {
     std::vector<std::string> v_str;
@@ -529,6 +537,7 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
     std::unique_lock<std::mutex> mlock(mutex_buffrecv);
     cv.wait(mlock, [&] { return check_data_recv(); });
     mutex_arrbuff.lock();
+    count += vec_str.size();
     while (vec_str.size() > 0)
     {
       v_str.push_back(vec_str.back());
@@ -646,7 +655,18 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
         }
       }
     }
+
+    std::cout<<"proc: "<<procinfo.procID <<"Senddone: "<<senddone<<"\n";
+    if (count == (vec_proc.size() * sl_mess))
+    {
+      while (senddone != vec_proc.size())
+      {
+        sleep(1);
+      }
+      exit(0);
+    }
   }
+  
   return;
 }
 
@@ -695,6 +715,11 @@ int main(int argc, char *argv[])
       break;
     }
   }
+
+  //Xoa file
+  std::fstream fil;
+  fil.open(LOGFOLDER + std::to_string(cur_proc.procID) + LOGFILE, std::ios::out);
+  fil.close();
 
   S_E_S(cur_proc, vec_proc);
 
