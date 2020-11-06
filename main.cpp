@@ -54,6 +54,7 @@ std::mutex mutex_VTP;
 std::mutex mutex_VTP2;
 std::mutex mutex_buffrecv;
 std::mutex mutex_log;
+std::mutex mutex_arrbuff;
 
 std::condition_variable cv;
 
@@ -131,7 +132,7 @@ std::string str_VM(V_M vm)
   return f;
 }
 
-void log_recv(int procID, V_M vm, std::string m)
+void log_recv(int procID, V_M vm, std::string m, std::string mess)
 {
   std::fstream f;
   f.open(LOGFOLDER + std::to_string(procID) + LOGFILE, std::ios::out | std::ios::app);
@@ -141,6 +142,7 @@ void log_recv(int procID, V_M vm, std::string m)
     exit(0);
   }
   f << ">>>>>>> " << m << " <<<<<<<\n";
+  f << mess << "\n";
   f << str_VM(vm);
   f << str_VTP();
   f << "\n\n";
@@ -177,10 +179,10 @@ int vec_compare_greater(std::vector<int> a, std::vector<int> b)
 
 void mergeVT(std::vector<int> vt)
 {
-  for(int i=0;i<Vtime.size();i++)
+  for (int i = 0; i < Vtime.size(); i++)
   {
-    if(vt[i]>Vtime[i])
-      Vtime[i]=vt[i];
+    if (vt[i] > Vtime[i])
+      Vtime[i] = vt[i];
   }
 }
 
@@ -192,7 +194,7 @@ void addVP(int procID_SendTo)
   vp.VT = Vtime;
   if (Vproc.size() == 0)
   {
-    std::cout<<"Vo duoc cai dau bang\n";
+    std::cout << "Vo duoc cai dau bang\n";
     Vproc.push_back(vp);
     return;
   }
@@ -324,16 +326,16 @@ V_M DeConvertData(std::string str)
 
 bool check_data_recv() // Kiem tra du lieu trong
 {
-  if (vec_str.size() >0)
+  if (vec_str.size() > 0)
     return true;
   return false;
 }
 
 void add_vec_p(V_P a)
 {
-  if(Vproc[0].procID<a.procID)
+  if (Vproc[0].procID < a.procID)
   {
-    Vproc.insert(Vproc.begin(),a);
+    Vproc.insert(Vproc.begin(), a);
     return;
   }
   for (int i = 0; i < Vproc.size() - 1; i++)
@@ -351,7 +353,7 @@ void mergeVP(std::vector<V_P> a)
 {
   if (Vproc.size() == 0)
   {
-    Vproc=a;
+    Vproc = a;
   }
 
   std::vector<V_P> copy = a;
@@ -376,7 +378,7 @@ void mergeVP(std::vector<V_P> a)
   }
 }
 
-void send_mess( std::string ip, int port, std::string mess)
+void send_mess(std::string ip, int port, std::string mess)
 {
   int sock;
   sockaddr_in serv_addr;
@@ -417,30 +419,29 @@ void thr_send(Proc_Info procinfo, Proc_Info procinfo2)
   int i = 0;
   while (i < sl_mess)
   {
-    
+
     std::string mess;
     V_M vm;
 
     srand(time(NULL));
     int res = rand() % (8 - 1 + 1) + 1;
     sleep(res);
-    
+
     mutex_VTP.lock();
     vm.v_p = Vproc;
-    
+
     addVP(procinfo2.procID);
-    
+
     Vtime[procinfo.procID - 1] += 1;
     vm.VTm = Vtime;
     mutex_VTP.unlock();
     mess = ConvertData(vm);
-   
+
     mess = mess + "proc " + std::to_string(procinfo.procID) + " - message " + std::to_string(i);
     i++;
 
     std::cout << "proc " << procinfo.procID << " gui mess " << i << " to proc " << procinfo2.procID << "\n";
     send_mess(procinfo2.IP, procinfo2.port, mess);
-    
   }
 }
 
@@ -473,6 +474,7 @@ void recv_mess(int procID, int port)
     std::cout << "Listen ERROR\n";
   }
 
+  int i=0;
   while (1)
   {
     std::cout << "accepting\n\n";
@@ -492,9 +494,13 @@ void recv_mess(int procID, int port)
     std::string str = buffer;
     //std::cout << str << std::endl<< std::endl;
     std::unique_lock<std::mutex> mlock(mutex_buffrecv);
+    mutex_arrbuff.lock();
     vec_str.push_back(str);
+    mutex_arrbuff.unlock();
     cv.notify_one();
 
+    i++;
+    std::cout<<"i ne: "<<i<<"\n";
     close(new_socket);
   }
 }
@@ -508,11 +514,11 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
   sleep(4);
 
   // GUI
-  std::thread *thrs=new std::thread[sl_proc];
+  std::thread *thrs = new std::thread[sl_proc];
   for (int i = 0; i < sl_proc; i++)
   {
-      thrs[i] = std::thread(thr_send,procinfo,vec_proc[i]);
-      thrs[i].detach();
+    thrs[i] = std::thread(thr_send, procinfo, vec_proc[i]);
+    thrs[i].detach();
   }
 
   while (1)
@@ -522,13 +528,13 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
     // Nhan mess tu thread recv
     std::unique_lock<std::mutex> mlock(mutex_buffrecv);
     cv.wait(mlock, [&] { return check_data_recv(); });
+    mutex_arrbuff.lock();
     while (vec_str.size() > 0)
     {
       v_str.push_back(vec_str.back());
       vec_str.pop_back();
     }
-
-    std::cout<<"dsbjd\n";
+    mutex_arrbuff.unlock();
 
     // phan giai du lieu va thuc thi ses
     for (int i = 0; i < v_str.size(); i++)
@@ -543,6 +549,7 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
 
       V_M vm = DeConvertData(str_vm);
       v_str.pop_back();
+      i--;
 
       //printVM(vm);
 
@@ -559,13 +566,13 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
       {
         dkloop = 1;
         mutex_log.lock();
-        log_recv(procinfo.procID, vm, "DELIVERY");
+        log_recv(procinfo.procID, vm, "DELIVERY", mes);
         mutex_log.unlock();
         mutex_VTP.lock();
         mergeVT(vm.VTm);
         Vtime[procinfo.procID - 1] += 1;
 
-        mergeVP( vm.v_p);
+        mergeVP(vm.v_p);
         mutex_VTP.unlock();
         std::cout << "delivery mess(1)\n";
       }
@@ -582,7 +589,7 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
           pa.second = mes;
           array_buffer.push_back(pa);
           mutex_log.lock();
-          log_recv(procinfo.procID, vm, "BUFFER");
+          log_recv(procinfo.procID, vm, "BUFFER", mes);
           mutex_log.unlock();
           std::cout << "buffered\n";
         }
@@ -590,7 +597,7 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
         {
           dkloop = 1;
           mutex_log.lock();
-          log_recv(procinfo.procID, vm, "DELIVERY");
+          log_recv(procinfo.procID, vm, "DELIVERY", mes);
           mutex_log.unlock();
           mutex_VTP.lock();
           mergeVT(vm.VTm);
@@ -622,13 +629,13 @@ void S_E_S(Proc_Info procinfo, std::vector<Proc_Info> vec_proc)
           if (kqua == 1 || kqua == 2)
           {
             mutex_log.lock();
-            log_recv(procinfo.procID, array_buffer[k].first, "DELIVERY (B)");
+            log_recv(procinfo.procID, array_buffer[k].first, "DELIVERY (B)", array_buffer[k].second);
             mutex_log.unlock();
             mutex_VTP.lock();
             mergeVT(array_buffer[k].first.VTm);
             Vtime[procinfo.procID - 1] += 1;
 
-             mergeVP(array_buffer[k].first.v_p);
+            mergeVP(array_buffer[k].first.v_p);
             mutex_VTP.unlock();
 
             array_buffer.erase(array_buffer.begin() + k);
